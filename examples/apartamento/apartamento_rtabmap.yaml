@@ -1,0 +1,14 @@
+image: apartamento_rtabmap.pgm
+mode: trinary
+resolution: 0.05
+origin: [-4.25, -2.75, 0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
+#  elevation layer
+elevation_image: apartamento_rtabmap_ele.pgm
+min_height: -1.02
+max_height: 1.73
+#  octomap
+octomap_file: apartamento_rtabmap_octo.ot
+binary: false
