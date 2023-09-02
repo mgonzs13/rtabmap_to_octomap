@@ -124,6 +124,10 @@ void OctomapToGridmap::convertAndPublishMap() {
 
   gridMapMessage->basic_layers = {};
 
+  if (gridMapMessage->data[0].data.size() == 0) {
+    return;
+  }
+
   auto customCompare = [](float a, float b) {
     if (std::isnan(a)) {
       return false;
