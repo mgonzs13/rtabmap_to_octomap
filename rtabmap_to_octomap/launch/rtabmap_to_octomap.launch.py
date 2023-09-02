@@ -6,7 +6,7 @@ from launch.actions import DeclareLaunchArgument
 
 def generate_launch_description():
 
-    input_image_topic = LaunchConfiguration("cloud_map_topic")
+    cloud_map_topic = LaunchConfiguration("cloud_map_topic")
     cloud_map_topic_cmd = DeclareLaunchArgument(
         "cloud_map_topic",
         default_value="cloud_map",
@@ -16,7 +16,7 @@ def generate_launch_description():
         package="octomap_server",
         executable="octomap_server_node",
         name="octomap_server_node",
-        remappings=[("cloud_in", input_image_topic)]
+        remappings=[("cloud_in", cloud_map_topic)]
     )
 
     octomap_to_gridmap_demo_node = Node(
