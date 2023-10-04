@@ -15,7 +15,7 @@
 
 using std::placeholders::_1;
 
-namespace rtabmap_to_octomap {
+using namespace rtabmap_to_octomap;
 
 OctomapToGridmap::OctomapToGridmap()
     : Node("octomap_to_gridmap_demo"),
@@ -42,8 +42,6 @@ void OctomapToGridmap::octomap_cb(const OctomapMessage::SharedPtr msg) {
 }
 
 bool OctomapToGridmap::read_parameters() {
-  this->declare_parameter("octomap_service_topic",
-                          std::string("/octomap_binary"));
   this->declare_parameter("min_x", NAN);
   this->declare_parameter("max_x", NAN);
   this->declare_parameter("min_y", NAN);
@@ -51,13 +49,13 @@ bool OctomapToGridmap::read_parameters() {
   this->declare_parameter("min_z", NAN);
   this->declare_parameter("max_z", NAN);
 
-  this->get_parameter("octomap_service_topic", this->octomapServiceTopic_);
   this->get_parameter("min_x", this->minX_);
   this->get_parameter("max_x", this->maxX_);
   this->get_parameter("min_y", this->minY_);
   this->get_parameter("max_y", this->maxY_);
   this->get_parameter("min_z", this->minZ_);
   this->get_parameter("max_z", this->maxZ_);
+
   return true;
 }
 
@@ -106,6 +104,19 @@ void OctomapToGridmap::convert_and_publish(
 
   this->map_.setFrameId(msg->header.frame_id);
 
+  for (auto i = 0; i < this->map_.getSize()(0); i++) {
+    for (auto j = 0; j < this->map_.getSize()(1); j++) {
+      grid_map::Index idx(i, j);
+      float height = this->map_.at("elevation", idx);
+
+      if (std::isnan(height)) {
+        this->map_.at("elevation", idx) = min_bound(2);
+      }
+    }
+  }
+
+  this->create_occupancy();
+
   // Publish as grid map.
   auto grid_map_msg = grid_map::GridMapRosConverter::toMessage(this->map_);
 
@@ -113,15 +124,6 @@ void OctomapToGridmap::convert_and_publish(
 
   if (grid_map_msg->data[0].data.size() == 0) {
     return;
-  }
-
-  for (size_t i = 0; i < grid_map_msg->data[0].data.size(); i++) {
-    if (!std::isnan(grid_map_msg->data[0].data[i])) {
-      grid_map_msg->data[1].data[i] = 100.0;
-    } else {
-      grid_map_msg->data[0].data[i] = min_bound(2);
-      grid_map_msg->data[1].data[i] = 0.0;
-    }
   }
 
   this->grid_map_publisher_->publish(std::move(grid_map_msg));
@@ -136,4 +138,52 @@ void OctomapToGridmap::convert_and_publish(
   this->octomap_publisher_->publish(std::move(octomap_msg_ptr));
 }
 
-} // namespace rtabmap_to_octomap
+void OctomapToGridmap::create_occupancy() {
+  float res = static_cast<float>(this->map_.getResolution());
+
+  for (auto i = 0; i < this->map_.getSize()(0); i++) {
+    for (auto j = 0; j < this->map_.getSize()(1); j++) {
+      grid_map::Index idx(i, j);
+      this->map_.at("occupancy", idx) = 1.0;
+    }
+  }
+
+  for (auto i = 0; i < this->map_.getSize()(0); i++) {
+    for (auto j = 0; j < this->map_.getSize()(1); j++) {
+      grid_map::Index idx(i, j);
+      float height = this->map_.at("elevation", idx);
+
+      float diff_n(0.0), diff_s(0.0), diff_w(0.0), diff_e(0.0);
+
+      // Check N cell
+      grid_map::Index n_pos(idx);
+      n_pos(0) = n_pos(0) + 1;
+      if (this->map_.isValid(n_pos, "elevation")) {
+        diff_n = abs(this->map_.at("elevation", n_pos) - height);
+      }
+
+      grid_map::Index w_pos(idx);
+      w_pos(1) = w_pos(1) + 1;
+      if (this->map_.isValid(w_pos, "elevation")) {
+        diff_w = abs(this->map_.at("elevation", w_pos) - height);
+      }
+
+      grid_map::Index e_pos(idx);
+      e_pos(1) = e_pos(1) - 1;
+      if (this->map_.isValid(e_pos, "elevation")) {
+        diff_e = abs(this->map_.at("elevation", e_pos) - height);
+      }
+
+      grid_map::Index s_pos(idx);
+      s_pos(0) = s_pos(0) - 1;
+      if (this->map_.isValid(s_pos, "elevation")) {
+        diff_s = abs(this->map_.at("elevation", s_pos) - height);
+      }
+
+      if (diff_n > (res * 2.0) || diff_s > (res * 2.0) ||
+          diff_w > (res * 2.0) || diff_e > (res * 2.0)) {
+        this->map_.at("occupancy", idx) = 254.0;
+      }
+    }
+  }
+}
