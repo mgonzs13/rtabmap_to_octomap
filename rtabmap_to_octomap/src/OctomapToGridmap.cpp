@@ -13,26 +13,35 @@
 #include <string>
 #include <utility>
 
+using std::placeholders::_1;
+
 namespace rtabmap_to_octomap {
 
 OctomapToGridmap::OctomapToGridmap()
     : Node("octomap_to_gridmap_demo"),
       map_(grid_map::GridMap({"elevation", "occupancy"})) {
 
-  readParameters();
+  read_parameters();
 
-  client_ = this->create_client<GetOctomapSrv>(octomapServiceTopic_);
-  map_.setBasicLayers({"elevation", "occupancy"});
+  this->map_.setBasicLayers({"elevation", "occupancy"});
 
-  gridMapPublisher_ = this->create_publisher<grid_map_msgs::msg::GridMap>(
-      "grid_map", rclcpp::QoS(1).transient_local());
-  octomapPublisher_ = this->create_publisher<OctomapMessage>(
+  this->grid_map_publisher_ =
+      this->create_publisher<grid_map_msgs::msg::GridMap>(
+          "grid_map", rclcpp::QoS(1).transient_local());
+  this->octomap_publisher_ = this->create_publisher<OctomapMessage>(
       "octomap", rclcpp::QoS(1).transient_local());
+
+  this->octo_sub_ = create_subscription<octomap_msgs::msg::Octomap>(
+      "octomap_full", 1, std::bind(&OctomapToGridmap::octomap_cb, this, _1));
 }
 
 OctomapToGridmap::~OctomapToGridmap() {}
 
-bool OctomapToGridmap::readParameters() {
+void OctomapToGridmap::octomap_cb(const OctomapMessage::SharedPtr msg) {
+  this->convert_and_publish(msg);
+}
+
+bool OctomapToGridmap::read_parameters() {
   this->declare_parameter("octomap_service_topic",
                           std::string("/octomap_binary"));
   this->declare_parameter("min_x", NAN);
@@ -42,43 +51,21 @@ bool OctomapToGridmap::readParameters() {
   this->declare_parameter("min_z", NAN);
   this->declare_parameter("max_z", NAN);
 
-  this->get_parameter("octomap_service_topic", octomapServiceTopic_);
-  this->get_parameter("min_x", minX_);
-  this->get_parameter("max_x", maxX_);
-  this->get_parameter("min_y", minY_);
-  this->get_parameter("max_y", maxY_);
-  this->get_parameter("min_z", minZ_);
-  this->get_parameter("max_z", maxZ_);
+  this->get_parameter("octomap_service_topic", this->octomapServiceTopic_);
+  this->get_parameter("min_x", this->minX_);
+  this->get_parameter("max_x", this->maxX_);
+  this->get_parameter("min_y", this->minY_);
+  this->get_parameter("max_y", this->maxY_);
+  this->get_parameter("min_z", this->minZ_);
+  this->get_parameter("max_z", this->maxZ_);
   return true;
 }
 
-void OctomapToGridmap::convertAndPublishMap() {
-  rclcpp::Clock clock;
+void OctomapToGridmap::convert_and_publish(
+    const OctomapMessage::SharedPtr msg) {
 
-  while (!client_->wait_for_service(std::chrono::seconds(1))) {
-    if (!rclcpp::ok()) {
-      RCLCPP_ERROR(this->get_logger(),
-                   "client interrupted while waiting for service to appear.");
-      return;
-    }
-    RCLCPP_INFO_THROTTLE(this->get_logger(), clock, 1000,
-                         "waiting for service to appear...");
-  }
-
-  auto request = std::make_shared<GetOctomapSrv::Request>();
-  auto result_future = client_->async_send_request(request);
-  if (rclcpp::spin_until_future_complete(this->get_node_base_interface(),
-                                         result_future) !=
-      rclcpp::FutureReturnCode::SUCCESS) {
-    RCLCPP_ERROR_STREAM(this->get_logger(),
-                        "Failed to call service: " << octomapServiceTopic_);
-    return;
-  }
-  auto response = result_future.get();
-
-  // creating octree
   octomap::OcTree *octomap = nullptr;
-  octomap::AbstractOcTree *tree = octomap_msgs::msgToMap(response->map);
+  octomap::AbstractOcTree *tree = octomap_msgs::msgToMap(*msg);
   if (tree) {
     octomap = dynamic_cast<octomap::OcTree *>(tree);
   } else {
@@ -90,81 +77,63 @@ void OctomapToGridmap::convertAndPublishMap() {
   grid_map::Position3 max_bound;
   octomap->getMetricMin(min_bound(0), min_bound(1), min_bound(2));
   octomap->getMetricMax(max_bound(0), max_bound(1), max_bound(2));
-  if (!std::isnan(minX_)) {
-    min_bound(0) = minX_;
+  if (!std::isnan(this->minX_)) {
+    min_bound(0) = this->minX_;
   }
   if (!std::isnan(maxX_)) {
-    max_bound(0) = maxX_;
+    max_bound(0) = this->maxX_;
   }
   if (!std::isnan(minY_)) {
-    min_bound(1) = minY_;
+    min_bound(1) = this->minY_;
   }
   if (!std::isnan(maxY_)) {
-    max_bound(1) = maxY_;
+    max_bound(1) = this->maxY_;
   }
   if (!std::isnan(minZ_)) {
-    min_bound(2) = minZ_;
+    min_bound(2) = this->minZ_;
   }
   if (!std::isnan(maxZ_)) {
-    max_bound(2) = maxZ_;
+    max_bound(2) = this->maxZ_;
   }
 
   bool res = grid_map::GridMapOctomapConverter::fromOctomap(
-      *octomap, "elevation", map_, &min_bound, &max_bound);
+      *octomap, "elevation", this->map_, &min_bound, &max_bound);
   if (!res) {
     RCLCPP_ERROR(this->get_logger(),
                  "Failed to call convert Octomap elevation layer.");
     return;
   }
 
-  map_.setFrameId(response->map.header.frame_id);
+  this->map_.setFrameId(msg->header.frame_id);
 
   // Publish as grid map.
-  auto gridMapMessage = grid_map::GridMapRosConverter::toMessage(map_);
+  auto grid_map_msg = grid_map::GridMapRosConverter::toMessage(this->map_);
 
-  gridMapMessage->basic_layers = {};
+  grid_map_msg->basic_layers = {};
 
-  if (gridMapMessage->data[0].data.size() == 0) {
+  if (grid_map_msg->data[0].data.size() == 0) {
     return;
   }
 
-  auto customCompare = [](float a, float b) {
-    if (std::isnan(a)) {
-      return false;
-    }
-    if (!std::isnan(a) && std::isnan(b)) {
-      return true;
-    }
-    return a < b;
-  };
-
-  auto min_value =
-      std::min_element(std::begin(gridMapMessage->data[0].data),
-                       std::end(gridMapMessage->data[0].data), customCompare);
-  if (min_value == gridMapMessage->data[0].data.end() &&
-      std::isnan(*min_value)) {
-    return;
-  }
-
-  for (size_t i = 0; i < gridMapMessage->data[0].data.size(); i++) {
-    if (!std::isnan(gridMapMessage->data[0].data[i])) {
-      gridMapMessage->data[1].data[i] = 100.0;
+  for (size_t i = 0; i < grid_map_msg->data[0].data.size(); i++) {
+    if (!std::isnan(grid_map_msg->data[0].data[i])) {
+      grid_map_msg->data[1].data[i] = 100.0;
     } else {
-      gridMapMessage->data[0].data[i] = *min_value;
-      gridMapMessage->data[1].data[i] = 0.0;
+      grid_map_msg->data[0].data[i] = min_bound(2);
+      grid_map_msg->data[1].data[i] = 0.0;
     }
   }
 
-  gridMapPublisher_->publish(std::move(gridMapMessage));
+  this->grid_map_publisher_->publish(std::move(grid_map_msg));
 
   // Also publish as an octomap msg for visualization
-  OctomapMessage octomapMessage;
-  octomap_msgs::fullMapToMsg(*octomap, octomapMessage);
-  octomapMessage.header.frame_id = map_.getFrameId();
+  OctomapMessage octomap_msg;
+  octomap_msgs::fullMapToMsg(*octomap, octomap_msg);
+  octomap_msg.header.frame_id = map_.getFrameId();
 
-  std::unique_ptr<OctomapMessage> octomapMessagePtr(
-      new OctomapMessage(octomapMessage));
-  octomapPublisher_->publish(std::move(octomapMessagePtr));
+  std::unique_ptr<OctomapMessage> octomap_msg_ptr(
+      new OctomapMessage(octomap_msg));
+  this->octomap_publisher_->publish(std::move(octomap_msg_ptr));
 }
 
 } // namespace rtabmap_to_octomap

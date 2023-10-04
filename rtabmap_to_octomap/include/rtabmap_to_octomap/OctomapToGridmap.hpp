@@ -18,30 +18,18 @@ public:
   using GetOctomapSrv = octomap_msgs::srv::GetOctomap;
   using OctomapMessage = octomap_msgs::msg::Octomap;
 
-  /*!
-   * Constructor.
-   */
   OctomapToGridmap();
-
-  /*!
-   * Destructor.
-   */
   virtual ~OctomapToGridmap();
-
-  /*!
-   * Reads and verifies the ROS parameters.
-   * @return true if successful.
-   */
-  bool readParameters();
-
-  void convertAndPublishMap();
+  bool read_parameters();
+  void convert_and_publish(const OctomapMessage::SharedPtr octomap);
+  void octomap_cb(const OctomapMessage::SharedPtr msg);
 
 private:
   //! Grid map publisher.
-  rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr gridMapPublisher_;
+  rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr grid_map_publisher_;
 
   //! Octomap publisher.
-  rclcpp::Publisher<OctomapMessage>::SharedPtr octomapPublisher_;
+  rclcpp::Publisher<OctomapMessage>::SharedPtr octomap_publisher_;
 
   //! Grid map data.
   grid_map::GridMap map_;
@@ -49,8 +37,8 @@ private:
   //! Name of the grid map topic.
   std::string octomapServiceTopic_;
 
-  //! Octomap service client
-  rclcpp::Client<GetOctomapSrv>::SharedPtr client_;
+  //! Octomap sub
+  rclcpp::Subscription<OctomapMessage>::SharedPtr octo_sub_;
 
   //! Bounding box of octomap to convert.
   float minX_;
